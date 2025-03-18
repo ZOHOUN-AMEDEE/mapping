@@ -74,7 +74,7 @@ class EcommerceDataProcessor:
         """
         self.credentials = credentials
         self.amazon_data = None
-        self.shopify_data = []  # Liste pour contenir les données des deux boutiques Shopify
+        self.shopify_data = []  # Liste pour contenir les données Shopify
         self.sku_mapping = None
         self.initialize_google_sheets()
         
@@ -139,10 +139,6 @@ class EcommerceDataProcessor:
                 "marketplaceIds": [self.credentials["amazon"]["marketplace_id"]]
             }
             
-            # Cette section est simplifiée, car en pratique, l'intégration avec l'API Amazon SP
-            # nécessite plusieurs étapes (création de rapport, vérification du statut, téléchargement)
-            # Dans un environnement réel, vous auriez besoin d'implémenter la logique complète
-            
             # Simulons des données pour le prototype
             mock_data = self.generate_mock_amazon_data(start_date, end_date)
             self.amazon_data = mock_data
@@ -199,7 +195,7 @@ class EcommerceDataProcessor:
         
         return pd.DataFrame(rows)
     
-    def fetch_shopify_data(self, shop_url, start_date, end_date, shop_index=0):
+    def fetch_shopify_data(self, shop_url, start_date, end_date):
         """
         Récupère les données de vente de Shopify
         
@@ -207,18 +203,17 @@ class EcommerceDataProcessor:
             shop_url (str): URL de la boutique Shopify
             start_date (str): Date de début au format YYYY-MM-DD
             end_date (str): Date de fin au format YYYY-MM-DD
-            shop_index (int): Index de la boutique Shopify (0 ou 1)
             
         Returns:
             pandas.DataFrame: DataFrame contenant les données de vente Shopify
         """
         try:
             # Configuration de l'API Shopify
-            api_version = "2024-01"
-            access_token = self.credentials["shopify"][shop_index]["access_token"]
+            api_key = self.credentials["shopify"]["api_key"]
+            secret_key = self.credentials["shopify"]["secret_key"]
             
             # Point de terminaison pour les commandes Shopify
-            url = f"https://{shop_url}/admin/api/{api_version}/orders.json"
+            url = f"https://{api_key}:{secret_key}@{shop_url}/admin/api/2024-01/orders.json"
             
             params = {
                 "status": "any",
@@ -227,28 +222,33 @@ class EcommerceDataProcessor:
                 "limit": 250  # Maximum autorisé par Shopify
             }
             
-            headers = {
-                "X-Shopify-Access-Token": access_token,
-                "Content-Type": "application/json"
-            }
+            # Récupération des données
+            response = requests.get(url, params=params)
+            response.raise_for_status()
             
-            # Cette section est simplifiée, car en pratique, vous auriez besoin de gérer la pagination
-            # pour récupérer toutes les commandes si leur nombre dépasse la limite
+            # Conversion des données en DataFrame
+            orders = response.json().get("orders", [])
+            rows = []
+            for order in orders:
+                for item in order.get("line_items", []):
+                    rows.append({
+                        "date": order["created_at"][:10],
+                        "order_id": order["id"],
+                        "product_name": item["title"],
+                        "sku": item["sku"],
+                        "quantity": item["quantity"],
+                        "price": float(item["price"]),
+                        "total": float(item["price"]) * item["quantity"]
+                    })
             
-            # Simulons des données pour le prototype
-            mock_data = self.generate_mock_shopify_data(start_date, end_date, shop_index)
+            df = pd.DataFrame(rows)
+            self.shopify_data.append(df)
             
-            # Stockage des données dans la liste
-            if len(self.shopify_data) <= shop_index:
-                self.shopify_data.append(mock_data)
-            else:
-                self.shopify_data[shop_index] = mock_data
-            
-            logger.info(f"Données Shopify (boutique {shop_index}) récupérées avec succès: {len(mock_data)} commandes")
-            return mock_data
+            logger.info(f"Données Shopify récupérées avec succès: {len(df)} commandes")
+            return df
             
         except Exception as e:
-            logger.error(f"Erreur lors de la récupération des données Shopify (boutique {shop_index}): {e}")
+            logger.error(f"Erreur lors de la récupération des données Shopify: {e}")
             raise
     
     def generate_mock_shopify_data(self, start_date, end_date, shop_index):
